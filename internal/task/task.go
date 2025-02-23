@@ -2,6 +2,7 @@ package task
 
 import (
 	"log"
+	"scheduler/internal/utils"
 	"sync"
 	"time"
 )
@@ -48,6 +49,8 @@ type Task struct {
 	progress      int
 	interruptChan chan struct{}
 	DoneChan      chan struct{}
+	WaitChan      chan struct{}
+	EventChan     chan struct{}
 }
 
 var nextTaskID = 0
@@ -69,6 +72,8 @@ func New(tType TaskType, priority TaskPriority, state TaskState) (*Task, error) 
 	nextTaskID++
 	t.interruptChan = make(chan struct{})
 	t.DoneChan = make(chan struct{})
+	t.WaitChan = make(chan struct{})
+	t.EventChan = make(chan struct{}, 1)
 	return &t, nil
 }
 
@@ -83,6 +88,15 @@ func (t *Task) Do() {
 				t.DoneChan <- struct{}{}
 				return
 			}
+			if t.tType == Extended && t.progress == ProgressLimit/2 && !utils.IsChannelClosed(t.WaitChan) {
+				log.Printf("Task %d waiting...\n", t.ID)
+				t.WaitChan <- struct{}{}
+				return
+			}
+			if t.tType == Basic && t.progress == ProgressLimit/2 && !utils.IsChannelClosed(t.EventChan) {
+				log.Printf("Task %d event release.\n", t.ID)
+				t.EventChan <- struct{}{}
+			}
 			t.progress++
 			log.Printf("Task %d progress: %d/%d\n", t.ID, t.progress, ProgressLimit)
 			time.Sleep(time.Duration(TaskSleepTime))
@@ -91,7 +105,7 @@ func (t *Task) Do() {
 }
 
 func (t *Task) Interrupt() {
-	close(t.interruptChan)
+	t.interruptChan <- struct{}{}
 }
 
 func (t *Task) SetType(newType TaskType) error {
