@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"log/slog"
 	"os"
+	"scheduler/internal/generator"
 	"scheduler/internal/scheduler"
-	"scheduler/internal/task"
-	"time"
 )
 
 func init() {
@@ -16,21 +16,20 @@ func init() {
 func main() {
 	s := scheduler.New()
 
-	// Генерация задач каждые 200 мс
-	//go generator.Generate(s)
-
-	// Работаем 3 секунды, затем останавливаем симуляцию
-
 	s.Run()
-	time.Sleep(1 * time.Second)
-	t, _ := task.New(task.Basic, task.P2, task.Suspended)
-	s.AddNewTask(t)
-	time.Sleep(2 * time.Second)
-	t, _ = task.New(task.Extended, task.P2, task.Ready)
-	s.AddNewTask(t)
-	time.Sleep(15 * time.Second)
-	t, _ = task.New(task.Basic, task.P1, task.Ready)
-	s.AddNewTask(t)
-	time.Sleep(1000 * time.Second)
+
+	go func() {
+		for i := 0; i < 1000; i++ {
+			t, err := generator.GenerateTask()
+			if err != nil {
+				log.Printf("failed to create task: %v\n", err)
+				continue
+			}
+			s.AddNewTask(t)
+		}
+	}()
+
+	<-s.StopChan
 	fmt.Println("Симуляция завершена.")
+
 }

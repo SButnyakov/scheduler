@@ -38,7 +38,7 @@ const (
 
 const (
 	ProgressLimit int           = 5
-	TaskSleepTime time.Duration = time.Duration(2 * time.Second)
+	TaskSleepTime time.Duration = time.Duration(500 * time.Millisecond)
 )
 
 type Task struct {
@@ -70,7 +70,7 @@ func New(tType TaskType, priority TaskPriority, state TaskState) (*Task, error) 
 		return nil, err
 	}
 	nextTaskID++
-	t.interruptChan = make(chan struct{})
+	t.interruptChan = make(chan struct{}, 2)
 	t.DoneChan = make(chan struct{})
 	t.WaitChan = make(chan struct{})
 	t.EventChan = make(chan struct{}, 1)
@@ -98,7 +98,7 @@ func (t *Task) Do() {
 				t.EventChan <- struct{}{}
 			}
 			t.progress++
-			log.Printf("Task %d progress: %d/%d\n", t.ID, t.progress, ProgressLimit)
+			log.Printf("Task %d progress: %d/%d | p=%d\n", t.ID, t.progress, ProgressLimit, t.priority)
 			time.Sleep(time.Duration(TaskSleepTime))
 		}
 	}
@@ -158,4 +158,18 @@ func isValidType(newType TaskType) bool {
 
 func isValidPriority(newP TaskPriority) bool {
 	return newP >= P0 && newP <= P3
+}
+
+func (t *Task) Copy() *Task {
+	return &Task{
+		ID:            t.ID,
+		tType:         t.tType,
+		priority:      t.priority,
+		state:         t.state,
+		progress:      t.progress,
+		interruptChan: make(chan struct{}),
+		DoneChan:      make(chan struct{}),
+		WaitChan:      make(chan struct{}),
+		EventChan:     make(chan struct{}, 1),
+	}
 }

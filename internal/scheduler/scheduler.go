@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"log"
 	"log/slog"
 	"scheduler/internal/task"
@@ -10,7 +11,7 @@ import (
 )
 
 const (
-	WaitTaskTime  time.Duration = 1 * time.Second
+	WaitTaskTime  time.Duration = 100 * time.Millisecond
 	MaxReadyTasks int           = 5
 	ReadyLimit    int           = MaxReadyTasks - 2
 )
@@ -23,8 +24,11 @@ type Scheduler struct {
 	sMu            sync.Mutex
 	rMu            sync.Mutex
 	wMu            sync.Mutex
+	ctMu           sync.Mutex
 	StopChan       chan struct{}
 	interruptChan  chan struct{}
+	Dumps          []scheduler_dump
+	noTasksCount   int
 }
 
 func New() *Scheduler {
@@ -38,6 +42,7 @@ func New() *Scheduler {
 		s.readyQueues[i] = make([]*task.Task, 0)
 		s.waitingQueues[i] = make([]*task.Task, 0)
 	}
+	s.Dumps = make([]scheduler_dump, 0)
 	return &s
 }
 
@@ -52,11 +57,19 @@ func (s *Scheduler) processTasks() {
 			t := s.popNextFromReady()
 			if t == nil {
 				time.Sleep(WaitTaskTime)
-				log.Println("NO TASKS")
+				s.noTasksCount++
+				if s.noTasksCount >= 10 {
+					s.sortDumpsByTimestamp()
+					log.Println("PROCESS EXITING...")
+					close(s.StopChan)
+					return
+				}
 				continue
 			}
+			s.noTasksCount = 0
 			s.currentTask = t
 			s.currentTask.SetState(task.Running)
+			s.dump(fmt.Sprintf("task ready -> running | ID=%d\n", t.ID))
 			go s.currentTask.Do()
 		}
 		select {
@@ -66,11 +79,15 @@ func (s *Scheduler) processTasks() {
 			log.Println("PROCESS TASK INTERRUPTED")
 			s.currentTask.SetState(task.Ready)
 			s.prependToReady(s.currentTask)
-			s.currentTask = nil
+			id := s.currentTask.ID
+			s.nilCurrentTask()
+			s.dump(fmt.Sprintf("task running -> ready | ID=%d\n", id))
 		case <-s.currentTask.DoneChan:
 			log.Println("PROCESS TASK DONE")
 			s.currentTask.SetState(task.Suspended)
-			s.currentTask = nil
+			id := s.currentTask.ID
+			s.nilCurrentTask()
+			s.dump(fmt.Sprintf("task running -> suspended | ID=%d\n", id))
 		case _, ok := <-s.currentTask.WaitChan:
 			if !ok {
 				continue
@@ -79,7 +96,9 @@ func (s *Scheduler) processTasks() {
 			s.currentTask.SetState(task.Waiting)
 			s.appendToWaiting(s.currentTask)
 			close(s.currentTask.WaitChan)
-			s.currentTask = nil
+			id := s.currentTask.ID
+			s.nilCurrentTask()
+			s.dump(fmt.Sprintf("task running -> waiting | ID=%d\n", id))
 		}
 		slog.Debug("PROCESS", slog.Any("SUS", s.suspendedQueue))
 		slog.Debug("PROCESS", slog.Any("REA", s.readyQueues))
@@ -89,6 +108,13 @@ func (s *Scheduler) processTasks() {
 
 func (s *Scheduler) manageQueues() {
 	for {
+		select {
+		case <-s.StopChan:
+			log.Println("MANAGE EXITING...")
+			return
+		default:
+		}
+
 		if utils.LMDA(s.readyQueues) < ReadyLimit && len(s.suspendedQueue) > 0 {
 			slog.Debug("MANAGE", slog.Any("SUS", s.suspendedQueue))
 			slog.Debug("MANAGE", slog.Any("REA", s.readyQueues))
@@ -96,32 +122,41 @@ func (s *Scheduler) manageQueues() {
 			s.appendToReady(t)
 			slog.Debug("MANAGE", slog.Any("SUS", s.suspendedQueue))
 			slog.Debug("MANAGE", slog.Any("REA", s.readyQueues))
+			s.dump(fmt.Sprintf("task suspended -> ready | ID=%d\n", t.ID))
 		}
+		s.ctMu.Lock()
 		if s.currentTask != nil {
 			select {
 			case _, ok := <-s.currentTask.EventChan:
 				if !ok {
+					s.ctMu.Unlock()
 					continue
 				}
 				t := s.popNextFromWaiting()
 				if t == nil {
+					s.ctMu.Unlock()
 					continue
 				}
 				close(s.currentTask.EventChan)
+				s.ctMu.Unlock()
 				s.prependToReady(t)
+				s.dump(fmt.Sprintf("task waiting -> ready | ID=%d\n", t.ID))
 			default:
+				s.ctMu.Unlock()
 				continue
 			}
+		} else {
+			s.ctMu.Unlock()
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 
 func (s *Scheduler) AddNewTask(t *task.Task) {
 	s.sMu.Lock()
-	defer s.sMu.Unlock()
 	t.SetState(task.Suspended)
 	s.suspendedQueue = append(s.suspendedQueue, t)
+	s.sMu.Unlock()
+	s.dump(fmt.Sprintf("task -> suspended | ID=%d\n", t.ID))
 }
 
 func (s *Scheduler) appendToReady(t *task.Task) {
@@ -181,6 +216,12 @@ func (s *Scheduler) popNextFromWaiting() *task.Task {
 		}
 	}
 	return nil
+}
+
+func (s *Scheduler) nilCurrentTask() {
+	s.ctMu.Lock()
+	defer s.ctMu.Unlock()
+	s.currentTask = nil
 }
 
 func (s *Scheduler) checkInterruption(t *task.Task) {

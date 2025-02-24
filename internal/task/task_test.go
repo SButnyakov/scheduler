@@ -1,98 +1,125 @@
 package task
 
 import (
-	"errors"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
-func TestTask_New_InvalidCases(t *testing.T) {
-	tests := []struct {
-		tType    TaskType
-		priority TaskPriority
-		state    TaskState
-		wantErr  bool
-	}{
-		{"invalid", P1, Ready, true},
-		{Basic, 5, Ready, true},
-		{Basic, P1, "invalid", true},
-		{Extended, P2, Running, false},
-	}
-
-	for _, tc := range tests {
-		_, err := New(tc.tType, tc.priority, tc.state)
-		if (err != nil) != tc.wantErr {
-			t.Errorf("New(%v, %v, %v) ожидал ошибку: %v, получил: %v", tc.tType, tc.priority, tc.state, tc.wantErr, err)
-		}
-	}
+func TestNewTask(t *testing.T) {
+	task, err := New(Basic, P1, Ready)
+	assert.NoError(t, err)
+	assert.NotNil(t, task)
+	assert.Equal(t, Basic, task.GetType())
+	assert.Equal(t, TaskPriority(P1), task.GetPriority())
+	assert.Equal(t, Ready, task.GetState())
 }
 
-func TestTaskState(t *testing.T) {
-	task := Task{ID: 1, tType: Basic, priority: P2, state: Ready}
+func TestSetType(t *testing.T) {
+	task, err := New(Basic, P1, Ready)
+	assert.NoError(t, err)
 
-	// Проверка начального состояния
-	if task.GetState() != Ready {
-		t.Errorf("Ожидалось состояние %s, получено %s", Ready, task.GetState())
-	}
+	err = task.SetType(Extended)
+	assert.NoError(t, err)
+	assert.Equal(t, Extended, task.GetType())
 
-	// Проверка изменения состояния
-	err := task.SetState(Running)
-	if err != nil {
-		t.Errorf("Ошибка при установке состояния: %v", err)
-	}
-	if task.GetState() != Running {
-		t.Errorf("Ожидалось состояние %s, получено %s", Running, task.GetState())
-	}
-
-	// Проверка недопустимого состояния
-	err = task.SetState("invalid")
-	if err == nil {
-		t.Errorf("Ожидалась ошибка при установке недопустимого состояния")
-	}
-	if !errors.Is(err, ErrInvalidState) {
-		t.Errorf("Ожидалась ошибка %v, получена %v", ErrInvalidState, err)
-	}
-}
-
-func TestTaskType(t *testing.T) {
-	task := Task{ID: 1, tType: Basic, priority: P2, state: Ready}
-
-	// Проверка корректного изменения типа
-	err := task.SetType(Extended)
-	if err != nil {
-		t.Errorf("Ошибка при установке типа: %v", err)
-	}
-	if task.GetType() != Extended {
-		t.Errorf("Ожидался тип %s, получен %s", Extended, task.GetType())
-	}
-
-	// Проверка недопустимого типа
 	err = task.SetType("invalid")
-	if err == nil {
-		t.Errorf("Ожидалась ошибка при установке недопустимого типа")
-	}
-	if !errors.Is(err, ErrInvalidType) {
-		t.Errorf("Ожидалась ошибка %v, получена %v", ErrInvalidType, err)
+	assert.Error(t, err)
+}
+
+func TestSetPriority(t *testing.T) {
+	task, err := New(Basic, P1, Ready)
+	assert.NoError(t, err)
+
+	err = task.SetPriority(P2)
+	assert.NoError(t, err)
+	assert.Equal(t, TaskPriority(P2), task.GetPriority())
+
+	err = task.SetPriority(10)
+	assert.Error(t, err)
+}
+
+func TestSetState(t *testing.T) {
+	task, err := New(Basic, P1, Ready)
+	assert.NoError(t, err)
+
+	err = task.SetState(Running)
+	assert.NoError(t, err)
+	assert.Equal(t, Running, task.GetState())
+
+	err = task.SetState("invalid")
+	assert.Error(t, err)
+}
+
+func TestDo(t *testing.T) {
+	task, err := New(Basic, P1, Ready)
+	assert.NoError(t, err)
+
+	go task.Do()
+	time.Sleep(TaskSleepTime * 3)
+	task.Interrupt()
+	time.Sleep(TaskSleepTime)
+
+	assert.GreaterOrEqual(t, task.progress, 2)
+}
+
+func TestDoExtended(t *testing.T) {
+	task, err := New(Extended, P1, Ready)
+	assert.NoError(t, err)
+
+	go task.Do()
+	time.Sleep(TaskSleepTime * 3)
+	assert.GreaterOrEqual(t, task.progress, 2)
+	select {
+	case <-task.WaitChan:
+	default:
+		assert.True(t, false)
 	}
 }
 
-func TestTaskPriority(t *testing.T) {
-	task := Task{ID: 1, tType: Basic, priority: P2, state: Ready}
+func TestInterrupt(t *testing.T) {
+	task, err := New(Basic, P1, Ready)
+	assert.NoError(t, err)
 
-	// Проверка корректного изменения приоритета
-	err := task.SetPriority(P3)
-	if err != nil {
-		t.Errorf("Ошибка при установке приоритета: %v", err)
-	}
-	if task.GetPriority() != P3 {
-		t.Errorf("Ожидался приоритет %d, получен %d", P3, task.GetPriority())
-	}
+	go task.Do()
+	time.Sleep(TaskSleepTime / 2)
+	task.Interrupt()
+	time.Sleep(TaskSleepTime)
 
-	// Проверка недопустимого приоритета
-	err = task.SetPriority(5)
-	if err == nil {
-		t.Errorf("Ожидалась ошибка при установке недопустимого приоритета")
-	}
-	if !errors.Is(err, ErrInvalidPriority) {
-		t.Errorf("Ожидалась ошибка %v, получена %v", ErrInvalidPriority, err)
-	}
+	assert.Equal(t, 1, task.progress)
+}
+
+func TestCopy(t *testing.T) {
+	task, err := New(Basic, P1, Ready)
+	assert.NoError(t, err)
+
+	taskCopy := task.Copy()
+	assert.Equal(t, task.ID, taskCopy.ID)
+	assert.Equal(t, task.GetType(), taskCopy.GetType())
+	assert.Equal(t, task.GetPriority(), taskCopy.GetPriority())
+	assert.Equal(t, task.GetState(), taskCopy.GetState())
+	assert.Equal(t, task.progress, taskCopy.progress)
+}
+
+func TestIsValidState(t *testing.T) {
+	assert.True(t, isValidState(Running))
+	assert.True(t, isValidState(Ready))
+	assert.True(t, isValidState(Waiting))
+	assert.True(t, isValidState(Suspended))
+	assert.False(t, isValidState("invalid"))
+}
+
+func TestIsValidType(t *testing.T) {
+	assert.True(t, isValidType(Basic))
+	assert.True(t, isValidType(Extended))
+	assert.False(t, isValidType("invalid"))
+}
+
+func TestIsValidPriority(t *testing.T) {
+	assert.True(t, isValidPriority(P0))
+	assert.True(t, isValidPriority(P1))
+	assert.True(t, isValidPriority(P2))
+	assert.True(t, isValidPriority(P3))
+	assert.False(t, isValidPriority(10))
 }
