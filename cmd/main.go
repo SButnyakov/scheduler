@@ -19,7 +19,7 @@ func main() {
 	s.Run()
 
 	go func() {
-		for i := 0; i < 1000; i++ {
+		for i := 0; i < 10; i++ {
 			t, err := generator.GenerateTask()
 			if err != nil {
 				log.Printf("failed to create task: %v\n", err)

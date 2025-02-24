@@ -74,16 +74,16 @@ func (s *Scheduler) processTasks() {
 		}
 		select {
 		case <-s.interruptChan:
-			log.Println("PROCESS TASK INTERRUPTING")
+			slog.Debug("PROCESS TASK INTERRUPTING")
 			s.currentTask.Interrupt()
-			log.Println("PROCESS TASK INTERRUPTED")
+			slog.Debug("PROCESS TASK INTERRUPTED")
 			s.currentTask.SetState(task.Ready)
 			s.prependToReady(s.currentTask)
 			id := s.currentTask.ID
 			s.nilCurrentTask()
 			s.dump(fmt.Sprintf("task running -> ready | ID=%d\n", id))
 		case <-s.currentTask.DoneChan:
-			log.Println("PROCESS TASK DONE")
+			slog.Debug("PROCESS TASK DONE")
 			s.currentTask.SetState(task.Suspended)
 			id := s.currentTask.ID
 			s.nilCurrentTask()
@@ -92,7 +92,7 @@ func (s *Scheduler) processTasks() {
 			if !ok {
 				continue
 			}
-			log.Println("PROCESS TASK WAIT")
+			slog.Debug("PROCESS TASK WAIT")
 			s.currentTask.SetState(task.Waiting)
 			s.appendToWaiting(s.currentTask)
 			close(s.currentTask.WaitChan)
@@ -230,8 +230,7 @@ func (s *Scheduler) checkInterruption(t *task.Task) {
 		case s.interruptChan <- struct{}{}:
 			log.Println("Interrupt signal sent")
 		default:
-			log.Println("Interrupt channel is busy")
+			slog.Debug("Interrupt channel is busy")
 		}
-
 	}
 }

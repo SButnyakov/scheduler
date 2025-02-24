@@ -12,47 +12,48 @@ import (
 )
 
 func TestScheduler_Requirements(t *testing.T) {
-	testsAmount := 5
+	testsAmount := 100
 	var wg sync.WaitGroup
 	wg.Add(testsAmount)
 	for i := 0; i < testsAmount; i++ {
 		go func() {
 			defer wg.Done()
 			tasksAmount := 5
-			s := New()
-			tasks := make([]*task.Task, 0, tasksAmount)
-
 			for i := 0; i < tasksAmount; i++ {
-				task, err := generator.GenerateTask()
+				s := New()
+				tasks := make([]*task.Task, 0, tasksAmount)
+
+				for i := 0; i < tasksAmount; i++ {
+					task, err := generator.GenerateTask()
+					assert.NoError(t, err)
+					s.AddNewTask(task)
+					tasks = append(tasks, task)
+				}
+
+				tasksMsg := ""
+				for _, v := range tasks {
+					tasksMsg += fmt.Sprintf("task | ID=%d | type=%s | priority=%d\n", v.ID, v.GetType(), v.GetPriority())
+				}
+
+				s.Run()
+				<-s.StopChan
+
+				for _, v := range tasks {
+					err := checkFirstInstanceIsSuspended(v, s.Dumps)
+					assert.NoError(t, err, tasksMsg)
+					err = checkStatesStoryCorrectness(v, s.Dumps)
+					assert.NoError(t, err, tasksMsg)
+				}
+
+				err := checkReadyQueuesLimit(s.Dumps)
 				assert.NoError(t, err)
-				s.AddNewTask(task)
-				tasks = append(tasks, task)
+
+				err = checkRunningTasksLimit(s.Dumps)
+				assert.NoError(t, err)
+
+				err = checkTaskPositionInReadyQueue(s.Dumps)
+				assert.NoError(t, err)
 			}
-
-			tasksMsg := ""
-			for _, v := range tasks {
-				tasksMsg += fmt.Sprintf("task | ID=%d | type=%s | priority=%d\n", v.ID, v.GetType(), v.GetPriority())
-			}
-			assert.True(t, true)
-
-			s.Run()
-			<-s.StopChan
-
-			for _, v := range tasks {
-				err := checkFirstInstanceIsSuspended(v, s.Dumps)
-				assert.NoError(t, err, tasksMsg)
-				err = checkStatesStoryCorrectness(v, s.Dumps)
-				assert.NoError(t, err, tasksMsg)
-			}
-
-			err := checkReadyQueuesLimit(s.Dumps)
-			assert.NoError(t, err)
-
-			err = checkRunningTasksLimit(s.Dumps)
-			assert.NoError(t, err)
-
-			err = checkTaskPositionInReadyQueue(s.Dumps)
-			assert.NoError(t, err)
 		}()
 	}
 	wg.Wait()
@@ -278,18 +279,27 @@ func checkTaskPositionInReadyQueue(dumps []scheduler_dump) error {
 
 		if _, err := fmt.Sscanf(dump.Name, "task waiting -> ready | ID=%d", &id); err == nil {
 			priority = findTaskPriorityByID(dump, id)
+			if priority == -1 {
+				return fmt.Errorf("failed to find task by its priority | ID=%d: %s", id, dump.Name)
+			}
 			queue = dump.ReadyQueues[priority]
 			if len(queue) == 0 || queue[0].ID != id {
 				return fmt.Errorf("task with ID=%d is not at the beginning of its priority readyQueue in dump: %s", id, dump.Name)
 			}
 		} else if _, err := fmt.Sscanf(dump.Name, "task running -> ready | ID=%d", &id); err == nil {
 			priority = findTaskPriorityByID(dump, id)
+			if priority == -1 {
+				return fmt.Errorf("failed to find task by its priority | ID=%d: %s", id, dump.Name)
+			}
 			queue = dump.ReadyQueues[priority]
 			if len(queue) == 0 || queue[0].ID != id {
 				return fmt.Errorf("task with ID=%d is not at the beginning of its priority readyQueue in dump: %s", id, dump.Name)
 			}
 		} else if _, err := fmt.Sscanf(dump.Name, "task suspended -> ready | ID=%d", &id); err == nil {
 			priority = findTaskPriorityByID(dump, id)
+			if priority == -1 {
+				return nil
+			}
 			queue = dump.ReadyQueues[priority]
 			if len(queue) == 0 || queue[len(queue)-1].ID != id {
 				return fmt.Errorf("task with ID=%d is not at the end of its priority readyQueue in dump: %s", id, dump.Name)

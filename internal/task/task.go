@@ -81,7 +81,11 @@ func (t *Task) Do() {
 	for {
 		select {
 		case <-t.interruptChan:
-			log.Printf("Task %d interruption\n", t.ID)
+			if t.tType == Extended {
+				log.Printf("ext-task-%d | interruption\n", t.ID)
+			} else {
+				log.Printf("bsc-task-%d | interruption\n", t.ID)
+			}
 			return
 		default:
 			if t.progress >= ProgressLimit {
@@ -89,16 +93,20 @@ func (t *Task) Do() {
 				return
 			}
 			if t.tType == Extended && t.progress == ProgressLimit/2 && !utils.IsChannelClosed(t.WaitChan) {
-				log.Printf("Task %d waiting...\n", t.ID)
+				log.Printf("ext-task-%d | waiting\n", t.ID)
 				t.WaitChan <- struct{}{}
 				return
 			}
 			if t.tType == Basic && t.progress == ProgressLimit/2 && !utils.IsChannelClosed(t.EventChan) {
-				log.Printf("Task %d event release.\n", t.ID)
+				log.Printf("bsc-task-%d | event\n", t.ID)
 				t.EventChan <- struct{}{}
 			}
 			t.progress++
-			log.Printf("Task %d progress: %d/%d | p=%d\n", t.ID, t.progress, ProgressLimit, t.priority)
+			if t.tType == Extended {
+				log.Printf("ext-task-%d | progress: %d/%d | p=%d\n", t.ID, t.progress, ProgressLimit, t.priority)
+			} else {
+				log.Printf("bsc-task-%d | progress: %d/%d | p=%d\n", t.ID, t.progress, ProgressLimit, t.priority)
+			}
 			time.Sleep(time.Duration(TaskSleepTime))
 		}
 	}
